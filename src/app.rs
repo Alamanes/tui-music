@@ -252,7 +252,11 @@ impl App {
         if self.player.playing {
             self.player.pause();
         } else if self.current_track.is_some() {
-            self.player.resume();
+            if self.player.is_finished() {
+                self.next();
+            } else {
+                self.player.resume();
+            }
         }
     }
 
@@ -408,7 +412,7 @@ mod tests {
                     Track {
                         path: p,
                         title: format!("t{}", i),
-                        artist: String::new(),
+                        artist: format!("a{}", i),
                         duration: 0.5,
                     }
                 })

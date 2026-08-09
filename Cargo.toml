@@ -1,6 +1,6 @@
 [package]
 name = "tui-music"
-version = "0.1.19"
+version = "0.1.20"
 edition = "2021"
 authors = ["Shiorangerin <141531482+Shiorangerin@users.noreply.github.com>"]
 
@@ -21,6 +21,10 @@ anyhow = "1.0"
 walkdir = "2.5"
 lofty = "0.22"
 clap = { version = "4.5", features = ["derive"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-foundation = "0.3"
+block2 = "0.6"
 
 [profile.release]
 opt-level = 3
