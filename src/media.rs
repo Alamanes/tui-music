@@ -87,7 +87,10 @@ mod imp {
     #[link(name = "Security", kind = "framework")]
     extern "C" {
         fn SecTaskCreateFromSelf(flags: u32) -> *mut c_void;
-        fn SecTaskCopySigningIdentifier(task: *mut c_void, flags: u32, out: *mut *mut c_void) -> c_int;
+        // macOS 26：SecTaskCopySigningIdentifier 已是 stub，转发到
+        // SecTaskCopyIdentifier(task, type=11, flags)，**直接返回 CFStringRef**，
+        // 不是旧文档的 OSStatus + out 参数（实测 26.5.1，反汇编确认）。
+        fn SecTaskCopySigningIdentifier(task: *mut c_void, flags: u32) -> *mut c_void;
         fn CFStringGetCString(s: *const c_void, buf: *mut c_char, bufsize: isize, encoding: u32) -> bool;
         fn CFRelease(cf: *const c_void);
     }
@@ -207,23 +210,22 @@ mod imp {
     }
 
     /// 查询本进程的代码签名标识（用于提示用户签名解锁）。
-    /// 返回 `None` 表示拿不到标识（未签名 / 非 macOS 26 语义）。
+    /// 未签名时返回二进制名（fallback identifier）；获取失败返回 `None`。
     fn signing_identifier() -> Option<String> {
-        // SAFETY: 纯查询函数。errSecSuccess == 0。
+        // SAFETY: 纯查询函数。
         unsafe {
             let task = SecTaskCreateFromSelf(0);
             if task.is_null() {
                 return None;
             }
-            let mut out: *mut c_void = std::ptr::null_mut();
-            let err = SecTaskCopySigningIdentifier(task, 0, &mut out);
+            let id = SecTaskCopySigningIdentifier(task, 0);
             CFRelease(task);
-            if err != 0 || out.is_null() {
+            if id.is_null() {
                 return None;
             }
             let mut buf = [0i8; 256];
-            let ok = CFStringGetCString(out, buf.as_mut_ptr(), 256, 0x08000100 /* UTF-8 */);
-            CFRelease(out);
+            let ok = CFStringGetCString(id, buf.as_mut_ptr(), 256, 0x08000100 /* UTF-8 */);
+            CFRelease(id);
             if !ok {
                 return None;
             }
