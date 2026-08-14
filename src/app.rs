@@ -243,7 +243,9 @@ impl App {
         }
         self.player.set_volume(self.volume);
         self.current_track = Some(playlist_track_i);
-        self.lyrics = raw_lyrics.as_deref().and_then(lyrics::parse_lrc);
+        // 歌词来源优先级：同目录同名 .lrc 文件 > 标签内嵌（USLT/LYRICS）。
+        self.lyrics = tui_music::lyrics::load_lrc_file(&path)
+            .or_else(|| raw_lyrics.as_deref().and_then(lyrics::parse_lrc));
         self.error = None;
     }
 

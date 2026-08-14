@@ -15,7 +15,8 @@
 - 歌单（playlist）：自动识别 `~/Music` 下目录名含「歌单」的子目录，目录内歌曲归入对应命名歌单；其余歌曲进入默认「歌曲架」按原逻辑平铺，`[` / `]` 切换歌单
 - 实时频谱（spectrum）：FFT 2048 → 经典镜像频谱：中轴上下对称的渐变色块（▀/▄/█ 半块分辨率）+ 峰值下落点，宽度填满，对数频率分布，attack/release 平滑
 - 即时查找（search）：键入字符实时过滤歌名 / 艺术家
-- 同步歌词（lyrics）：读取标签内 LRC 歌词，Now Playing 面板随播放进度滚动高亮
+- 同步歌词（lyrics）：优先读取音乐同目录的同名 `.lrc` 文件，其次标签内嵌歌词；Now Playing 面板随播放进度滚动高亮
+- 批量歌词工具（`tui-music-fetch-lrc`）：按歌名/歌手自动从 LRCLIB + 网易云下载 `.lrc`，见下文「歌词获取」
 - Now Playing 全屏面板（`i`）：大标题 + 同步歌词 + 镜像频谱 + 可点击大进度条
 - 鼠标支持（mouse）：列表点击播放 / 滚轮选歌，点击进度条任意位置定位，头部 / 频谱 / 状态栏滚轮调音量
 - 会话记忆（state）：退出时保存音量 / 循环 / 随机 / 歌单与选中曲目到 `~/.config/tui-music/state.conf`，下次启动自动恢复（不自动播放）
@@ -170,6 +171,25 @@ src/
 ├── state.rs       会话状态持久化          [库]
 └── media.rs       macOS MediaRemote 桥接（AirPods 按键 + 正在播放）[bin, macOS]
 ```
+
+## 歌词获取
+
+播放器读取**与音频同目录的同名 `.lrc` 文件**（其次标签内嵌歌词）。批量拉取工具：
+
+```sh
+brew install orangerin/apps/tui-music-fetch-lrc   # 安装
+
+# 扫描整个 ~/Music（默认）：
+tui-music-fetch-lrc
+# 或指定文件/目录：
+tui-music-fetch-lrc "~/Music/Heal the World Michael Jackson.mp3"
+tui-music-fetch-lrc ~/Music/MeUmy歌单
+# 只预览缺哪些歌：
+tui-music-fetch-lrc --dry-run
+```
+
+数据源：LRCLIB（免费公共歌词库，无鉴权）优先，网易云音乐 API 兜底；
+只下载带时间戳的同步歌词，保存为 `歌名.lrc`，已存在的自动跳过。
 
 播放器用 `MonoTee` 包装解码源：解码出的多声道样本下混为 mono，一边送往 cpal 播放，一边写入环形缓冲 `VizBuffer`。频谱模块从该缓冲取出最近的 2048 个采样，加汉宁窗后做 FFT，按对数频率聚合为终端宽度自适应条数；UI 以中轴上下镜像的渐变色块（▀/▄/█ 半块分辨率）绘制，并叠加峰值下落点。app 内对每个频段做 attack(0.7)/release(0.25) 帧间平滑，让起伏自然不抖；峰值包络每帧固定回落、随实际电平顶起。
 

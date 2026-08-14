@@ -1,12 +1,23 @@
-//! LRC 歌词解析：从音频标签中提取带时间戳的歌词（USLT/LYRICS 常见为
-//! LRC 文本），解析为按时间排序的行序列，供 Now Playing 面板同步滚动。
+//! LRC 歌词解析：优先读取与音频同目录的同名 `.lrc` 文件，其次使用
+//! 标签内嵌歌词（USLT/LYRICS 常见为 LRC 文本），解析为按时间排序的
+//! 行序列，供 Now Playing 面板同步滚动。
 //! 无时间戳的纯文本歌词不视为同步歌词（返回 None）。
+
+use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LyricLine {
     /// 距曲目开始的秒数
     pub time: f64,
     pub text: String,
+}
+
+/// 读取与音频同目录的同名 `.lrc` 文件并解析；文件不存在或不是
+/// 有效同步歌词时返回 None。
+pub fn load_lrc_file(track: &Path) -> Option<Vec<LyricLine>> {
+    let lrc = track.with_extension("lrc");
+    let text = std::fs::read_to_string(lrc).ok()?;
+    parse_lrc(&text)
 }
 
 /// 解析 LRC 文本；没有任何 `[mm:ss.xx]` 时间戳时返回 None。
@@ -98,5 +109,27 @@ mod tests {
         let ls = parse_lrc(raw).unwrap();
         assert_eq!(ls.len(), 1);
         assert_eq!(ls[0].text, "正文");
+    }
+
+    #[test]
+    fn lrc_file_sibling_loading() {
+        let dir = std::env::temp_dir().join(format!("tui_music_lrc_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let audio = dir.join("歌 手.mp3");
+        // 无同名 .lrc → None
+        assert!(load_lrc_file(&audio).is_none());
+        // 写入有效同步歌词 → Some
+        std::fs::write(
+            dir.join("歌 手.lrc"),
+            "[00:01.00]第一句\n[00:02.00]第二句\n",
+        )
+        .unwrap();
+        let ls = load_lrc_file(&audio).unwrap();
+        assert_eq!(ls.len(), 2);
+        assert_eq!(ls[0].time, 1.0);
+        assert_eq!(ls[1].text, "第二句");
+        // 无效（无时间戳）→ None
+        std::fs::write(dir.join("歌 手.lrc"), "没有时间戳\n").unwrap();
+        assert!(load_lrc_file(&audio).is_none());
     }
 }
