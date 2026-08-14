@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use clap::Parser;
-use crossterm::event::{self, Event, KeyEventKind};
+use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -60,12 +60,16 @@ where
     enable_raw_mode()?;
     let result = (|| {
         let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen)?;
+        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
         let r = f(&mut terminal);
         let _ = terminal.show_cursor();
-        let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
+        let _ = execute!(
+            terminal.backend_mut(),
+            LeaveAlternateScreen,
+            DisableMouseCapture
+        );
         r
     })();
     let _ = disable_raw_mode();
@@ -79,7 +83,12 @@ fn run<B: ratatui::backend::Backend>(
     let tick = Duration::from_millis(33);
     let mut media = media::Bridge::new();
     loop {
-        terminal.draw(|f| ui::draw(f, app))?;
+        // 每帧回传可交互区域，供鼠标事件命中测试（draw 回调无法直接返回值，走侧信道）。
+        let mut li_slot: Option<ui::LayoutInfo> = None;
+        terminal.draw(|f| {
+            li_slot = Some(ui::draw(f, app));
+        })?;
+        let li = li_slot.unwrap_or_default();
 
         // AirPods / 硬件媒体键命令（来自 MediaRemote，跑在独立线程上）。
         while let Some(cmd) = media.poll() {
@@ -90,10 +99,14 @@ fn run<B: ratatui::backend::Backend>(
 
         if event::poll(tick)? {
             while event::poll(Duration::ZERO).unwrap_or(false) {
-                if let Event::Key(k) = event::read()? {
-                    if k.kind != KeyEventKind::Release {
-                        app.handle_key(k);
+                match event::read()? {
+                    Event::Key(k) => {
+                        if k.kind != KeyEventKind::Release {
+                            app.handle_key(k);
+                        }
                     }
+                    Event::Mouse(m) => app.handle_mouse(m, &li),
+                    _ => {}
                 }
             }
         }

@@ -1,10 +1,14 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::layout::Rect;
 
 use tui_music::library::{scan, Playlist, Track};
+use tui_music::lyrics;
 use tui_music::player::{Player, RepeatMode};
+
+use crate::ui::LayoutInfo;
 
 pub struct App {
     pub music_dir: PathBuf,
@@ -22,6 +26,12 @@ pub struct App {
     pub should_quit: bool,
     pub search: String,
     pub search_active: bool,
+    /// 频谱峰值包络（与 smoothed 同长），每帧固定回落，用于下落点绘制。
+    pub peaks: Vec<f32>,
+    /// Now Playing 全屏面板开关（`i` 切换）。
+    pub show_np: bool,
+    /// 当前曲目的同步歌词（LRC 解析结果），无则 None。
+    pub lyrics: Option<Vec<lyrics::LyricLine>>,
     /// Last non-fatal error, shown in the footer.
     pub error: Option<String>,
     rng_state: u64,
@@ -58,6 +68,9 @@ impl App {
             should_quit: false,
             search: String::new(),
             search_active: false,
+            peaks: Vec::new(),
+            show_np: false,
+            lyrics: None,
             error: None,
             rng_state: seed_rng(),
             shuffle_queue: Vec::new(),
@@ -221,13 +234,16 @@ impl App {
         if playlist_track_i >= tracks.len() {
             return;
         }
-        let path = tracks[playlist_track_i].path.clone();
+        let track = &tracks[playlist_track_i];
+        let path = track.path.clone();
+        let raw_lyrics = track.lyrics.clone();
         if let Err(e) = self.player.play_file(&path) {
             self.error = Some(format!("cannot play: {}", e));
             return;
         }
         self.player.set_volume(self.volume);
         self.current_track = Some(playlist_track_i);
+        self.lyrics = raw_lyrics.as_deref().and_then(lyrics::parse_lrc);
         self.error = None;
     }
 
@@ -351,6 +367,105 @@ impl App {
         }
     }
 
+    /// 定位到绝对秒数（进度条点击用），越界夹紧。
+    pub fn seek_absolute(&mut self, sec: f64) {
+        let Some(o) = self.current_track else { return };
+        let Some(t) = self.active_tracks().get(o) else {
+            return;
+        };
+        if t.duration <= 0.0 {
+            return;
+        }
+        let target = sec.clamp(0.0, (t.duration - 0.2).max(0.0));
+        if let Err(e) = self.player.seek(Duration::from_secs_f64(target)) {
+            self.error = Some(format!("seek failed: {e}"));
+        } else {
+            self.error = None;
+        }
+    }
+
+    /// 当前播放位置对应的歌词行下标（最后一句 time <= pos）。
+    pub fn current_lyric_idx(&self) -> Option<usize> {
+        let ls = self.lyrics.as_ref()?;
+        let pos = self.player.position.as_secs_f64();
+        let mut idx = None;
+        for (i, l) in ls.iter().enumerate() {
+            if l.time <= pos + 0.05 {
+                idx = Some(i);
+            } else {
+                break;
+            }
+        }
+        idx
+    }
+
+    /// 鼠标交互：列表区点击播放 / 滚轮移动选择；进度条点击定位；
+    /// 其余区域（头部 / 频谱 / 状态栏 / Now Playing）滚轮调节音量。
+    pub fn handle_mouse(&mut self, m: MouseEvent, li: &LayoutInfo) {
+        let (x, y) = (m.column as i32, m.row as i32);
+        let contains = |r: Rect| {
+            r.width > 0
+                && r.height > 0
+                && x >= r.x as i32
+                && x < (r.x + r.width) as i32
+                && y >= r.y as i32
+                && y < (r.y + r.height) as i32
+        };
+        match m.kind {
+            MouseEventKind::ScrollUp => {
+                if contains(li.list) {
+                    self.selected_mut(-1);
+                } else if contains(li.np)
+                    || contains(li.header)
+                    || contains(li.spectrum)
+                    || contains(li.footer)
+                {
+                    self.change_volume(0.05);
+                }
+            }
+            MouseEventKind::ScrollDown => {
+                if contains(li.list) {
+                    self.selected_mut(1);
+                } else if contains(li.np)
+                    || contains(li.header)
+                    || contains(li.spectrum)
+                    || contains(li.footer)
+                {
+                    self.change_volume(-0.05);
+                }
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                // 进度条：按横向比例定位
+                if let Some(pr) = li.progress {
+                    if contains(pr) {
+                        let frac = (x - pr.x as i32) as f64 / pr.width.max(1) as f64;
+                        if let Some(o) = self.current_track {
+                            if let Some(t) = self.active_tracks().get(o) {
+                                if t.duration > 0.0 {
+                                    self.seek_absolute(frac * t.duration);
+                                }
+                            }
+                        }
+                        return;
+                    }
+                }
+                // 列表：点击行播放对应曲目
+                if contains(li.list) && li.list.height > 2 {
+                    let row = y - li.list.y as i32 - 1;
+                    if row < 0 {
+                        return;
+                    }
+                    let idx = li.list_offset + row as usize;
+                    if let Some(o) = self.display.get(idx).copied() {
+                        self.selected = Some(idx);
+                        self.play_track(o);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn smooth(&mut self, raw: Vec<f32>) {
         if self.smoothed.len() != raw.len() {
             self.smoothed = raw.clone();
@@ -401,6 +516,16 @@ impl App {
         let samples = self.player.viz.latest(tui_music::viz::FFT_N);
         let raw = tui_music::viz::compute(&samples, num_bars.max(16));
         self.smooth(raw);
+
+        // 峰值包络：固定速度回落，被当前值顶起时不落后于实际电平。
+        const PEAK_FALL: f32 = 0.015;
+        if self.peaks.len() != self.smoothed.len() {
+            self.peaks = self.smoothed.clone();
+        } else {
+            for (p, &s) in self.peaks.iter_mut().zip(self.smoothed.iter()) {
+                *p = (*p - PEAK_FALL).max(s).max(0.0);
+            }
+        }
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
@@ -439,6 +564,9 @@ impl App {
             (false, KeyCode::Char('p')) | (false, KeyCode::BackTab) => self.prev(),
             (false, KeyCode::Char('r')) => self.cycle_repeat(),
             (false, KeyCode::Char('s')) => self.toggle_shuffle(),
+            (false, KeyCode::Char('i')) => {
+                self.show_np = !self.show_np;
+            }
             (false, KeyCode::Char('=')) | (false, KeyCode::Char('+')) => self.change_volume(0.05),
             (false, KeyCode::Char('-')) => self.change_volume(-0.05),
             _ => {}
@@ -504,6 +632,7 @@ mod tests {
                         title: format!("t{}", i),
                         artist: format!("a{}", i),
                         duration: 0.5,
+                        lyrics: None,
                     }
                 })
                 .collect(),
@@ -528,6 +657,9 @@ mod tests {
             should_quit: false,
             search: String::new(),
             search_active: false,
+            peaks: Vec::new(),
+            show_np: false,
+            lyrics: None,
             error: None,
             rng_state: 1,
             shuffle_queue: Vec::new(),
@@ -606,6 +738,62 @@ mod tests {
         assert!(app.error.is_some(), "error should be surfaced, not panic");
         assert_eq!(app.current_track, None);
         app.should_quit = false; // still alive
+    }
+
+    #[test]
+    fn peaks_fall_and_stick() {
+        let mut app = app_with(1);
+        app.smoothed = vec![0.3; 32];
+        app.peaks = vec![0.9; 32];
+        app.update(32);
+        // 空闲时 viz 为零：smoothed 向 0 衰减，峰值固定回落 0.015 后贴住 smoothed。
+        // smoothed: 0.3 + (0 - 0.3) * 0.25 = 0.225；peak: max(0.9 - 0.015, 0.225) = 0.885
+        assert!(app.peaks.iter().all(|&p| (p - 0.885).abs() < 1e-4));
+    }
+
+    #[test]
+    fn mouse_click_in_list_plays_track() {
+        let mut app = app_with(3);
+        let li = LayoutInfo {
+            list: Rect::new(0, 5, 40, 10),
+            ..Default::default()
+        };
+        app.handle_mouse(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 2,
+                row: 6,
+                modifiers: KeyModifiers::NONE,
+            },
+            &li,
+        );
+        assert_eq!(app.selected, Some(0));
+        assert_eq!(app.current_track, Some(0));
+        // 下一行点击应播放第二首
+        app.handle_mouse(
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 2,
+                row: 7,
+                modifiers: KeyModifiers::NONE,
+            },
+            &li,
+        );
+        assert_eq!(app.current_track, Some(1));
+    }
+
+    #[test]
+    fn np_toggle_and_lyric_lookup() {
+        let mut app = app_with(2);
+        assert!(!app.show_np);
+        app.handle_key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE));
+        assert!(app.show_np);
+        app.handle_key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE));
+        assert!(!app.show_np);
+
+        // 无歌词时 current_lyric_idx 为 None
+        app.play_selected();
+        assert!(app.current_lyric_idx().is_none());
     }
 
     #[test]

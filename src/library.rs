@@ -1,6 +1,7 @@
 use lofty::file::TaggedFileExt;
 use lofty::prelude::{Accessor, AudioFile};
 use lofty::probe::Probe;
+use lofty::tag::ItemKey;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -10,6 +11,8 @@ pub struct Track {
     pub title: String,
     pub artist: String,
     pub duration: f64,
+    /// 原始歌词文本（通常为 LRC 格式），无标签时为 None。
+    pub lyrics: Option<String>,
 }
 
 #[derive(Clone)]
@@ -159,6 +162,7 @@ fn load_or_fallback(p: &Path) -> Track {
             title: String::new(),
             artist: String::new(),
             duration: 0.0,
+            lyrics: None,
         },
     }
 }
@@ -175,11 +179,15 @@ fn load(p: &Path) -> anyhow::Result<Track> {
         (String::new(), String::new())
     };
     let duration = tagged.properties().duration().as_secs_f64();
+    let lyrics = tags
+        .and_then(|t| t.get_string(&ItemKey::Lyrics))
+        .map(|s| s.to_string());
     Ok(Track {
         path: p.to_path_buf(),
         title,
         artist,
         duration,
+        lyrics,
     })
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "tui-music"
-version = "0.1.23"
+version = "0.1.24"
 edition = "2021"
 authors = ["Shiorangerin <141531482+Shiorangerin@users.noreply.github.com>"]
 
