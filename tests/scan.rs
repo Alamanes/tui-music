@@ -20,7 +20,9 @@ fn scans_generated_sample_dir() {
     let total: usize = playlists.iter().map(|p| p.tracks.len()).sum();
     assert!(total >= 2);
     let has_mp3 = playlists.iter().any(|p| {
-        p.tracks.iter().any(|t| t.path.extension().unwrap_or_default() == "mp3")
+        p.tracks
+            .iter()
+            .any(|t| t.path.extension().unwrap_or_default() == "mp3")
     });
     assert!(has_mp3);
 }

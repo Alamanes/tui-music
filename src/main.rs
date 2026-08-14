@@ -10,7 +10,9 @@ use std::time::Duration;
 use clap::Parser;
 use crossterm::event::{self, Event, KeyEventKind};
 use crossterm::execute;
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
@@ -41,7 +43,12 @@ fn main() -> anyhow::Result<()> {
         app.selected = Some(0);
     }
 
-    with_terminal(|terminal| run(terminal, &mut app))
+    let result = with_terminal(|terminal| run(terminal, &mut app));
+    // 退出时保存会话状态（音量/循环/随机/歌单/选中曲目）。
+    if let Some(p) = tui_music::state::default_path() {
+        let _ = tui_music::state::save(&p, &app.snapshot_state());
+    }
+    result
 }
 
 /// Enter raw mode + alternate screen for the duration of `f`, and always

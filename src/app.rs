@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -42,7 +43,7 @@ impl App {
             .get(active)
             .map(|pl| (0..pl.tracks.len()).collect())
             .unwrap_or_default();
-        Ok(Self {
+        let mut app = Self {
             music_dir,
             playlists,
             active_playlist: active,
@@ -60,7 +61,58 @@ impl App {
             error: None,
             rng_state: seed_rng(),
             shuffle_queue: Vec::new(),
-        })
+        };
+        app.restore_state();
+        Ok(app)
+    }
+
+    /// 从默认路径恢复会话状态（音量/循环/随机/歌单/选中曲目），不自动播放。
+    fn restore_state(&mut self) {
+        let Some(path) = tui_music::state::default_path() else {
+            return;
+        };
+        let Some(s) = tui_music::state::load(&path) else {
+            return;
+        };
+        self.volume = s.volume.clamp(0.0, 1.0);
+        self.player.set_volume(self.volume);
+        self.repeat = tui_music::state::repeat_from_str(&s.repeat);
+        self.shuffle = s.shuffle;
+        if let Some(i) = self.playlists.iter().position(|p| p.name == s.playlist) {
+            self.active_playlist = i;
+            self.rebuild_display();
+            if let Some(ti) = self
+                .active_tracks()
+                .iter()
+                .position(|t| t.path.to_string_lossy() == s.track_path)
+            {
+                if let Some(v) = self.display.iter().position(|&o| o == ti) {
+                    self.selected = Some(v);
+                }
+            }
+        }
+    }
+
+    /// 导出当前会话状态用于持久化。
+    pub fn snapshot_state(&self) -> tui_music::state::AppState {
+        let playlist = self
+            .playlists
+            .get(self.active_playlist)
+            .map(|p| p.name.clone())
+            .unwrap_or_default();
+        let track_path = self
+            .selected
+            .and_then(|v| self.display.get(v).copied())
+            .and_then(|o| self.active_tracks().get(o))
+            .map(|t| t.path.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        tui_music::state::AppState {
+            volume: self.volume,
+            repeat: tui_music::state::repeat_as_str(&self.repeat).to_string(),
+            shuffle: self.shuffle,
+            playlist,
+            track_path,
+        }
     }
 
     pub fn active_tracks(&self) -> &[Track] {
@@ -145,7 +197,9 @@ impl App {
         if n == 0 {
             return;
         }
-        let cur = self.selected.unwrap_or_else(|| if delta > 0 { 0 } else { n - 1 });
+        let cur = self
+            .selected
+            .unwrap_or_else(|| if delta > 0 { 0 } else { n - 1 });
         let mut next = cur as i32 + delta;
         while next < 0 {
             next += n as i32;
@@ -251,9 +305,11 @@ impl App {
     pub fn toggle_pause(&mut self) {
         if self.player.playing {
             self.player.pause();
-        } else if self.current_track.is_some() {
+        } else if let Some(o) = self.current_track {
             if self.player.is_finished() {
-                self.next();
+                // 自然播完后按空格：重播当前曲目而非跳下一首。
+                // 循环 All/One 时 update() 已自动切歌，这里通常只在 repeat Off 到达。
+                self.play_track(o);
             } else {
                 self.player.resume();
             }
@@ -276,6 +332,23 @@ impl App {
     pub fn change_volume(&mut self, delta: f32) {
         self.volume = (self.volume + delta).clamp(0.0, 1.0);
         self.player.set_volume(self.volume);
+    }
+
+    /// ±delta 秒快进/快退；无曲目、无时长或已播完时忽略，越界夹紧。
+    pub fn seek(&mut self, delta: f64) {
+        let Some(o) = self.current_track else { return };
+        let Some(t) = self.active_tracks().get(o) else {
+            return;
+        };
+        if t.duration <= 0.0 || self.player.is_finished() {
+            return;
+        }
+        let cur = self.player.position.as_secs_f64();
+        let target = (cur + delta).clamp(0.0, (t.duration - 0.2).max(0.0));
+        match self.player.seek(Duration::from_secs_f64(target)) {
+            Ok(()) => self.error = None,
+            Err(e) => self.error = Some(format!("seek failed: {e}")),
+        }
     }
 
     fn smooth(&mut self, raw: Vec<f32>) {
@@ -308,10 +381,16 @@ impl App {
                     RepeatMode::One => {
                         self.play_track(o);
                     }
-                    _ => {
-                        let n = self.display.len();
-                        let v = self.current_view();
-                        if v.is_none() || v.unwrap() + 1 < n || matches!(self.repeat, RepeatMode::All) {
+                    RepeatMode::All => {
+                        self.next();
+                    }
+                    RepeatMode::Off => {
+                        // repeat Off：仅当当前曲目之后还有曲目时才前进；
+                        // 当前曲目被搜索过滤隐藏或已是最后一首时停在原地。
+                        if self
+                            .current_view()
+                            .is_some_and(|v| v + 1 < self.display.len())
+                        {
                             self.next();
                         }
                     }
@@ -326,10 +405,19 @@ impl App {
 
     pub fn handle_key(&mut self, key: KeyEvent) {
         if self.search_active {
+            // 忽略 Ctrl/Alt 组合键（如 Ctrl+C），避免把控制字符敲进搜索框。
+            if key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+            {
+                return;
+            }
             match key.code {
                 KeyCode::Esc => self.exit_search(false),
                 KeyCode::Enter => self.exit_search(true),
                 KeyCode::Backspace => self.search_pop(),
+                KeyCode::Up => self.selected_mut(-1),
+                KeyCode::Down => self.selected_mut(1),
                 KeyCode::Char(c) => self.search_push(c),
                 _ => {}
             }
@@ -343,7 +431,9 @@ impl App {
             (false, KeyCode::Char(']')) => self.switch_playlist(1),
             (false, KeyCode::Up | KeyCode::Char('k')) => self.selected_mut(-1),
             (false, KeyCode::Down | KeyCode::Char('j')) => self.selected_mut(1),
-            (false, KeyCode::Enter) | (false, KeyCode::Char('l')) => self.play_selected(),
+            (false, KeyCode::Enter) => self.play_selected(),
+            (false, KeyCode::Left | KeyCode::Char('h')) => self.seek(-5.0),
+            (false, KeyCode::Right | KeyCode::Char('l')) => self.seek(5.0),
             (false, KeyCode::Char(' ')) => self.toggle_pause(),
             (false, KeyCode::Char('n')) | (false, KeyCode::Tab) => self.next(),
             (false, KeyCode::Char('p')) | (false, KeyCode::BackTab) => self.prev(),
@@ -421,8 +511,7 @@ mod tests {
     }
 
     fn app_with(n: usize) -> App {
-        let dir = std::env::temp_dir()
-            .join(format!("tui_music_test_{}_{}", std::process::id(), n));
+        let dir = std::env::temp_dir().join(format!("tui_music_test_{}_{}", std::process::id(), n));
         fs::create_dir_all(&dir).unwrap();
         let mut app = App {
             music_dir: dir.clone(),
@@ -502,7 +591,10 @@ mod tests {
         app.shuffle = true;
         app.next();
         let got = app.current_track.unwrap();
-        assert_ne!(got, 4, "shuffle must not immediately repeat the current track");
+        assert_ne!(
+            got, 4,
+            "shuffle must not immediately repeat the current track"
+        );
     }
 
     #[test]
@@ -514,5 +606,37 @@ mod tests {
         assert!(app.error.is_some(), "error should be surfaced, not panic");
         assert_eq!(app.current_track, None);
         app.should_quit = false; // still alive
+    }
+
+    #[test]
+    fn search_ignores_ctrl_and_alt_combos() {
+        let mut app = app_with(2);
+        app.enter_search();
+        app.handle_key(crossterm::event::KeyEvent::new(
+            KeyCode::Char('c'),
+            KeyModifiers::CONTROL,
+        ));
+        app.handle_key(crossterm::event::KeyEvent::new(
+            KeyCode::Char('x'),
+            KeyModifiers::ALT,
+        ));
+        assert!(app.search.is_empty(), "组合键不得进入搜索框");
+        app.handle_key(crossterm::event::KeyEvent::new(
+            KeyCode::Char('a'),
+            KeyModifiers::NONE,
+        ));
+        assert_eq!(app.search, "a");
+    }
+
+    #[test]
+    fn space_after_end_replays_current_track() {
+        let mut app = app_with(3);
+        app.selected = Some(2);
+        app.play_selected();
+        assert_eq!(app.current_track, Some(2));
+        app.player.stop(); // sink 清空 → is_finished，模拟自然播完
+        app.toggle_pause(); // 空格应重播当前曲目而非跳下一首
+        assert_eq!(app.current_track, Some(2));
+        assert!(app.player.playing);
     }
 }

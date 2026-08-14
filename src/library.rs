@@ -1,7 +1,7 @@
-use std::path::{Path, PathBuf};
-use lofty::probe::Probe;
 use lofty::file::TaggedFileExt;
 use lofty::prelude::{Accessor, AudioFile};
+use lofty::probe::Probe;
+use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 #[derive(Clone)]
@@ -43,7 +43,9 @@ impl Track {
     }
 }
 
-const EXTENSIONS: &[&str] = &["mp3", "flac", "wav", "ogg", "vorbis", "m4a", "aac", "opus", "aiff", "aif", "alac"];
+const EXTENSIONS: &[&str] = &[
+    "mp3", "flac", "wav", "ogg", "vorbis", "m4a", "aac", "opus", "aiff", "aif", "alac",
+];
 
 pub fn is_audio(p: &Path) -> bool {
     let e = match p.extension() {
@@ -74,7 +76,10 @@ pub fn scan(root: &Path) -> Vec<Playlist> {
             if !p.is_dir() {
                 continue;
             }
-            let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            let name = p
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
             if name.contains(PLAYLIST_MARKER) {
                 playlist_dirs.push((playlist_name(&name), p));
             }
@@ -107,9 +112,17 @@ pub fn scan(root: &Path) -> Vec<Playlist> {
     }
 
     for tracks in playlist_tracks.iter_mut() {
-        tracks.sort_by(|a, b| a.display_name().to_lowercase().cmp(&b.display_name().to_lowercase()));
+        tracks.sort_by(|a, b| {
+            a.display_name()
+                .to_lowercase()
+                .cmp(&b.display_name().to_lowercase())
+        });
     }
-    shelf_tracks.sort_by(|a, b| a.display_name().to_lowercase().cmp(&b.display_name().to_lowercase()));
+    shelf_tracks.sort_by(|a, b| {
+        a.display_name()
+            .to_lowercase()
+            .cmp(&b.display_name().to_lowercase())
+    });
 
     let shelf_empty = shelf_tracks.is_empty();
 

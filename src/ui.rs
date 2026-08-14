@@ -1,9 +1,9 @@
-use std::time::Duration;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
+use std::time::Duration;
 
 use crate::app::App;
 use tui_music::player::RepeatMode;
@@ -28,7 +28,7 @@ fn layout_constraints(h: u16) -> Vec<Constraint> {
             Constraint::Length(3),  // search
             Constraint::Min(6),     // list
             Constraint::Length(16), // spectrum
-            Constraint::Length(4),   // footer
+            Constraint::Length(4),  // footer
         ];
     }
     if h >= 14 {
@@ -62,7 +62,9 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     }
     let title = Span::styled(
         " tui-music ",
-        Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Magenta)
+            .add_modifier(Modifier::BOLD),
     );
     let inner_w = area.width.saturating_sub(2);
     let dir = if inner_w >= 35 {
@@ -82,7 +84,9 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     for (i, pl) in app.playlists.iter().enumerate() {
         let is_active = i == app.active_playlist;
         let style = if is_active {
-            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::DarkGray)
         };
@@ -132,12 +136,10 @@ fn draw_list(f: &mut Frame, app: &App, area: Rect) {
         .get(app.active_playlist)
         .map(|p| p.name.as_str())
         .unwrap_or("???");
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(Span::styled(
-            format!(" {} ({}) ", pl_name, app.display.len()),
-            Style::default().fg(Color::Cyan),
-        ));
+    let block = Block::default().borders(Borders::ALL).title(Span::styled(
+        format!(" {} ({}) ", pl_name, app.display.len()),
+        Style::default().fg(Color::Cyan),
+    ));
     let items: Vec<ListItem> = app
         .display
         .iter()
@@ -148,7 +150,9 @@ fn draw_list(f: &mut Frame, app: &App, area: Rect) {
             let marker = if is_cur { ">" } else { " " };
             let name = t.display_name();
             let style = if is_cur {
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::Gray)
             };
@@ -257,16 +261,29 @@ fn put_dot(f: &mut Frame, x: u16, y: u16, color: Color, half: bool) {
     } else {
         Style::default().fg(color)
     };
-    f.buffer_mut().set_string(x, y, ch.encode_utf8(&mut [0u8; 4]), style);
+    f.buffer_mut()
+        .set_string(x, y, ch.encode_utf8(&mut [0u8; 4]), style);
 }
 
 fn spectrum_color(freq: f32) -> Color {
     if freq < 0.33 {
-        blend(Color::Rgb(120, 220, 240), Color::Rgb(170, 140, 250), freq / 0.33)
+        blend(
+            Color::Rgb(120, 220, 240),
+            Color::Rgb(170, 140, 250),
+            freq / 0.33,
+        )
     } else if freq < 0.66 {
-        blend(Color::Rgb(170, 140, 250), Color::Rgb(250, 130, 200), (freq - 0.33) / 0.33)
+        blend(
+            Color::Rgb(170, 140, 250),
+            Color::Rgb(250, 130, 200),
+            (freq - 0.33) / 0.33,
+        )
     } else {
-        blend(Color::Rgb(250, 130, 200), Color::Rgb(250, 210, 160), (freq - 0.66) / 0.34)
+        blend(
+            Color::Rgb(250, 130, 200),
+            Color::Rgb(250, 210, 160),
+            (freq - 0.66) / 0.34,
+        )
     }
 }
 
@@ -310,7 +327,11 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         RepeatMode::One => "One",
         RepeatMode::All => "List",
     };
-    let st = if app.player.playing { "Playing" } else { "Paused" };
+    let st = if app.player.playing {
+        "Playing"
+    } else {
+        "Paused"
+    };
     let shuf = if app.shuffle { "On" } else { "Off" };
     let pos = fmt_dur(app.player.position);
 
@@ -375,10 +396,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     let bar_w = area.width.saturating_sub(2) as usize;
     let filled = (pct * bar_w as f64) as usize;
     let progress = format!("[{}{}]", "=".repeat(filled), "-".repeat(bar_w - filled));
-    let progress_line = Line::from(Span::styled(
-        progress,
-        Style::default().fg(Color::Magenta),
-    ));
+    let progress_line = Line::from(Span::styled(progress, Style::default().fg(Color::Magenta)));
 
     let help = Line::from(vec![
         Span::styled(

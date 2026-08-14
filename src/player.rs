@@ -19,7 +19,11 @@ struct VizRing {
 
 impl VizRing {
     fn new(capacity: usize) -> Self {
-        Self { buf: vec![0.0; capacity], head: 0, len: 0 }
+        Self {
+            buf: vec![0.0; capacity],
+            head: 0,
+            len: 0,
+        }
     }
 
     fn push(&mut self, s: f32) {
@@ -45,19 +49,23 @@ impl VizRing {
 
 impl VizBuffer {
     pub fn new(capacity: usize) -> Self {
-        Self { inner: Arc::new(Mutex::new(VizRing::new(capacity))) }
+        Self {
+            inner: Arc::new(Mutex::new(VizRing::new(capacity))),
+        }
     }
 
     /// Push a batch of mono samples under a single lock.
     pub fn push_batch(&self, samples: &[f32]) {
-        let mut r = self.inner.lock().unwrap();
+        // 锁中毒（另一线程 panic）不应连带杀死音频线程
+        let mut r = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         for &s in samples {
             r.push(s);
         }
     }
 
     pub fn latest(&self, n: usize) -> Vec<f32> {
-        let r = self.inner.lock().unwrap();
+        // 锁中毒（另一线程 panic）不应连带杀死音频线程
+        let r = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let mut out = r.latest(n);
         if out.len() < n {
             out.resize(n, 0.0);
@@ -194,6 +202,13 @@ impl Player {
     /// Real playback position from the audio backend (accurate across pause/buffer).
     pub fn update_position(&mut self) {
         self.position = self.sink.get_pos();
+    }
+
+    /// Seek 到绝对位置。失败时返回错误，由调用方展示在 footer。
+    pub fn seek(&self, target: Duration) -> anyhow::Result<()> {
+        self.sink
+            .try_seek(target)
+            .map_err(|e| anyhow::anyhow!("{e}"))
     }
 
     pub fn set_volume(&self, v: f32) {

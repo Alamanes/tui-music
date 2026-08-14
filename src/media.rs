@@ -48,7 +48,7 @@ mod imp {
     use std::time::{Duration, Instant};
 
     use block2::RcBlock;
-    use objc2_foundation::{ns_string, NSDate, NSMutableDictionary, NSNumber, NSString, NSObject};
+    use objc2_foundation::{ns_string, NSDate, NSMutableDictionary, NSNumber, NSObject, NSString};
 
     /// MediaRemote 私有框架的命令码（`MRMediaRemoteCommand`）。
     const CMD_PLAY: u32 = 0;
@@ -81,7 +81,11 @@ mod imp {
     extern "C" {
         /// 泵主 run loop：MediaRemote 的命令投递走主线程 run loop / 主队列，
         /// TUI 主循环本身没有 Cocoa run loop，必须周期性调用它服务回调。
-        fn CFRunLoopRunInMode(mode: *const c_void, seconds: f64, return_after_source_handled: bool) -> c_int;
+        fn CFRunLoopRunInMode(
+            mode: *const c_void,
+            seconds: f64,
+            return_after_source_handled: bool,
+        ) -> c_int;
     }
 
     #[link(name = "Security", kind = "framework")]
@@ -91,7 +95,12 @@ mod imp {
         // SecTaskCopyIdentifier(task, type=11, flags)，**直接返回 CFStringRef**，
         // 不是旧文档的 OSStatus + out 参数（实测 26.5.1，反汇编确认）。
         fn SecTaskCopySigningIdentifier(task: *mut c_void, flags: u32) -> *mut c_void;
-        fn CFStringGetCString(s: *const c_void, buf: *mut c_char, bufsize: isize, encoding: u32) -> bool;
+        fn CFStringGetCString(
+            s: *const c_void,
+            buf: *mut c_char,
+            bufsize: isize,
+            encoding: u32,
+        ) -> bool;
         fn CFRelease(cf: *const c_void);
     }
 
@@ -131,7 +140,11 @@ mod imp {
             }
             Some(Api {
                 set_now_playing: unsafe {
-                    resolve!(handle, "MRMediaRemoteSetNowPlayingInfo", FnSetNowPlayingInfo)
+                    resolve!(
+                        handle,
+                        "MRMediaRemoteSetNowPlayingInfo",
+                        FnSetNowPlayingInfo
+                    )
                 },
                 set_can_be_now_playing: unsafe {
                     resolve!(
@@ -141,7 +154,11 @@ mod imp {
                     )
                 },
                 set_command_handler: unsafe {
-                    resolve!(handle, "MRMediaRemoteSetCommandHandlerBlock", FnSetCommandHandler)
+                    resolve!(
+                        handle,
+                        "MRMediaRemoteSetCommandHandlerBlock",
+                        FnSetCommandHandler
+                    )
                 },
             })
         }
@@ -270,7 +287,9 @@ mod imp {
                 rx,
                 reg,
                 claimed: false,
-                last_pub: Instant::now() - Duration::from_secs(10),
+                last_pub: Instant::now()
+                    .checked_sub(Duration::from_secs(10))
+                    .unwrap_or_else(Instant::now),
                 last: None,
             }
         }
@@ -292,7 +311,14 @@ mod imp {
 
         /// 发布当前播放状态。仅在真正播放时向系统声明身份；
         /// 无曲目（title 为空）时收回声明并清空卡片，避免残留与抢占。
-        pub fn sync(&mut self, playing: bool, title: &str, artist: &str, duration: f64, elapsed: f64) {
+        pub fn sync(
+            &mut self,
+            playing: bool,
+            title: &str,
+            artist: &str,
+            duration: f64,
+            elapsed: f64,
+        ) {
             let has_track = !title.is_empty();
             if has_track && playing && !self.claimed {
                 if let Some(reg) = &self.reg {
@@ -331,7 +357,14 @@ mod imp {
             });
             self.last_pub = now;
             if let Some(reg) = &self.reg {
-                publish(&reg.api, playing && has_track, title, artist, duration, elapsed);
+                publish(
+                    &reg.api,
+                    playing && has_track,
+                    title,
+                    artist,
+                    duration,
+                    elapsed,
+                );
             }
         }
     }
@@ -355,7 +388,15 @@ impl Bridge {
         None
     }
     pub fn pump(&mut self) {}
-    pub fn sync(&mut self, _playing: bool, _title: &str, _artist: &str, _duration: f64, _elapsed: f64) {}
+    pub fn sync(
+        &mut self,
+        _playing: bool,
+        _title: &str,
+        _artist: &str,
+        _duration: f64,
+        _elapsed: f64,
+    ) {
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -367,7 +408,6 @@ pub fn system_integration_available() -> bool {
 mod tests {
     use super::imp::map_command;
     use super::Command as C;
-    use super::*;
 
     /// 覆盖六个已知命令码 + 一个未知码（应返回 None）。纯函数，无条件运行。
     #[test]

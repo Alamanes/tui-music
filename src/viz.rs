@@ -1,5 +1,5 @@
-use std::cell::RefCell;
 use rustfft::{num_complex::Complex, FftPlanner};
+use std::cell::RefCell;
 
 pub const FFT_N: usize = 2048;
 
@@ -63,9 +63,7 @@ mod tests {
     fn sine(freq_hz: f32, rate: u32) -> Vec<f32> {
         let n = FFT_N;
         (0..n)
-            .map(|i| {
-                (2.0 * std::f32::consts::PI * freq_hz * i as f32 / rate as f32).sin()
-            })
+            .map(|i| (2.0 * std::f32::consts::PI * freq_hz * i as f32 / rate as f32).sin())
             .collect()
     }
 
@@ -81,7 +79,10 @@ mod tests {
         let out = compute(&sine(440.0, 44100), 128);
         assert!(out.iter().all(|&v| (0.0..=1.0).contains(&v)));
         let peak = out.iter().cloned().fold(0.0f32, f32::max);
-        assert!(peak > 0.9, "a sustained full-scale tone should reach the top");
+        assert!(
+            peak > 0.9,
+            "a sustained full-scale tone should reach the top"
+        );
     }
 
     #[test]
@@ -93,7 +94,11 @@ mod tests {
             .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
             .map(|(i, _)| i)
             .unwrap();
-        assert!(peak_idx < 8, "100Hz energy should sit near the low end, got {}", peak_idx);
+        assert!(
+            peak_idx < 8,
+            "100Hz energy should sit near the low end, got {}",
+            peak_idx
+        );
     }
 
     #[test]
