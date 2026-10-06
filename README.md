@@ -59,7 +59,7 @@ cargo build --release
 
 ### 直接下载预编译二进制
 
-到 [Releases](https://github.com/Shiorangerin/tui-music/releases) 下载对应平台的二进制，放入 `PATH` 即可。
+到 [Releases](https://github.com/Alamanes/tui-music/releases) 下载对应平台的二进制，放入 `PATH` 即可。
 
 ## 使用
 

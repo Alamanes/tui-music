@@ -2,7 +2,7 @@
 name = "tui-music"
 version = "0.1.25"
 edition = "2021"
-authors = ["Shiorangerin <141531482+Shiorangerin@users.noreply.github.com>"]
+authors = ["Alamanes <337309384+Alamanes@users.noreply.github.com>"]
 
 [lib]
 name = "tui_music"
